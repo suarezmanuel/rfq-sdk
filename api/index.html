@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>my-arkiv-app</title>
+  </head>
+  <body>
+    <div id="app">
+      <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; gap: 20px; font-family: system-ui, -apple-system, sans-serif;">
+        <h1>Arkiv App</h1>
+        <button 
+          id="connect-btn" 
+          onclick="connectAndWrite()"
+          style="padding: 12px 24px; font-size: 16px; background-color: #4CAF50; color: white; border: none; border-radius: 8px; cursor: pointer; transition: background-color 0.3s;"
+          onmouseover="this.style.backgroundColor='#45a049'"
+          onmouseout="this.style.backgroundColor='#4CAF50'"
+        >
+          Connect Wallet & Create Entity
+        </button>
+        <div id="status" style="margin-top: 20px; color: #666;"></div>
+      </div>
+    </div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
