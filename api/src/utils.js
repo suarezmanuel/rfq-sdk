@@ -76,7 +76,7 @@ async function fetchRequestsFromUserBuy(publicClient, userPublicKey) {
   .where(eq('type', 'browser-wallet'))
   .where(eq('my_project', 'wins'))
   .where(eq('tx_type', 'buy'))
-  .ownedBy(userPublicKey)
+  .where(eq('$owner', userPublicKey))
   .withAttributes(true)
   .withPayload(true)
   .withMetadata(true)
@@ -90,7 +90,7 @@ async function fetchRequestsFromUserSell(publicClient, userPublicKey) {
   .where(eq('type', 'browser-wallet'))
   .where(eq('my_project', 'wins'))
   .where(eq('tx_type', 'sell'))
-  .ownedBy(userPublicKey)
+  .where(eq('$owner', userPublicKey))
   .withAttributes(true)
   .withPayload(true)
   .withMetadata(true)
@@ -139,7 +139,6 @@ async function fetchRequestsFromTokenLTAmount(publicClient, fromToken="ETH", amo
   .fetch()
   return result.entities;
 }
-
 
 // sell fromAmount of fromToken for an unknown amount of toToken
 // parentRequestKey is the txHash of a sell/buy entity.
@@ -195,28 +194,28 @@ async function fetchOffersParentToToken(publicClient, parentRequestKey, toToken=
 
 // fetch all entities owned by lookupAddress
 // filter=[{key: 'app_id', value: 'my-app-id'}, {key: 'tx_type', value: 'buy'}]
-async function fetchUserEntities(publicClient, lookupAddress, limit=undefined, attributes=[]) {
-  const query = publicClient.buildQuery();
-  let builder = query
-    .where(eq('type', 'browser-wallet'))
-    .where(eq('my_project', 'wins'))
-    .ownedBy(lookupAddress)
-    .withAttributes(true)
-    .withPayload(true)
-    .withMetadata(true);
+// async function fetchUserEntities(publicClient, lookupAddress, limit=undefined, attributes=[]) {
+//   const query = publicClient.buildQuery();
+//   let builder = query
+//     .where(eq('type', 'browser-wallet'))
+//     .where(eq('my_project', 'wins'))
+//     .where(eq('$owner', lookupAddress))
+//     .withAttributes(true)
+//     .withPayload(true)
+//     .withMetadata(true);
   
-  // Add attribute filters if provided
-  attributes.forEach(attr => {
-    builder = builder.where(eq(attr.key, attr.value));
-  });
+//   // Add attribute filters if provided
+//   attributes.forEach(attr => {
+//     builder = builder.where(eq(attr.key, attr.value));
+//   });
   
-  if (limit) {
-    builder = builder.limit(limit);
-  }
+//   if (limit) {
+//     builder = builder.limit(limit);
+//   }
   
-  const result = await builder.fetch();
-  return result.entities;
-}
+//   const result = await builder.fetch();
+//   return result.entities;
+// }
 
 // delete the entity with the given entityKey, maybe the user regrets deploying the trade
 // do we need another function for when the trade is successful?
@@ -237,4 +236,4 @@ async function getEntity(publicClient, entityKey) {
   return entity;
 }
 
-export { createEntity, createBuyEntity, createSellEntity, fetchUserEntities, getEntity, fetchAllRequests, fetchRequestsFromToken, fetchRequestsFromTokenGTAmount, fetchRequestsFromTokenLTAmount, createOfferEntity, fetchOffersParent, fetchOffersParentToToken, fetchRequestsFromUserBuy, fetchRequestsFromUserSell}
+export { createEntity, createBuyEntity, createSellEntity, fetchRequestsFromUserBuy, fetchRequestsFromUserSell, getEntity, fetchAllRequests, fetchRequestsFromToken, fetchRequestsFromTokenGTAmount, fetchRequestsFromTokenLTAmount, createOfferEntity, fetchOffersParent, fetchOffersParentToToken}
