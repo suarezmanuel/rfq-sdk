@@ -2,7 +2,7 @@ import { createWalletClient, createPublicClient, http} from '@arkiv-network/sdk'
 import { mendoza } from '@arkiv-network/sdk/chains'
 import { stringToPayload, bytesToString, ExpirationTime } from '@arkiv-network/sdk/utils'
 import { custom } from '@arkiv-network/sdk';
-import { eq, gt } from "@arkiv-network/sdk/query"
+import { eq, gt, lt, or } from "@arkiv-network/sdk/query"
 
 const DEFAULT_EXPIRATION_TIME = ExpirationTime.fromHours(24);
 
@@ -34,23 +34,18 @@ async function createEntity(
 // make the entities numbered somehow?
 // buy fromAmount of fromToken for an unknown amount of toToken
 // ExpirationTime.fromHours(24)
-async function createBuyEntity(walletClient, fromToken, toToken, fromAmount, expiresIn=DEFAULT_EXPIRATION_TIME) {
-  return createEntity(
+// maybe add a limit to the requests extracted.
+async function createBuyEntity(walletClient, fromAmount, fromToken, toToken, expiresIn=DEFAULT_EXPIRATION_TIME) {
+  // we can maybe later display the txHash
+  const { entityKey, txHash } = await createEntity(
       walletClient, 
       `buy ${fromAmount} ${fromToken} for an unknown amount of ${toToken}`, 
       'text/plain', 
       [{ key: 'app_id', value: 'my-app-id' }, { key: 'tx_type', value: 'buy' }, { key: 'from_amount', value: fromAmount }, { key: 'from_token', value: fromToken }, { key: 'to_token', value: toToken}],
       expiresIn
     );
+    return entityKey;
 }
-
-// toToken
-// fromToken 
-// fromAmountGT
-// fromAmountLT
-// toAmountGT
-// toAmountLT
-
 // sell fromAmount of fromToken for an unknown amount of toToken
 async function createSellEntity(walletClient, fromToken, toToken, fromAmount, expiresIn=DEFAULT_EXPIRATION_TIME) {
     return createEntity(
@@ -62,100 +57,128 @@ async function createSellEntity(walletClient, fromToken, toToken, fromAmount, ex
       );
 }
 
-// sell fromAmount of fromToken for an unknown amount of toToken
-async function createOfferEntity(walletClient, fromToken, fromAmount, toToken, toAmount, expiresIn=DEFAULT_EXPIRATION_TIME) {
-    return createEntity(
-        walletClient, 
-        `offer ${fromAmount} ${fromToken} for ${toAmount} ${toToken}`, 
-        'text/plain',
-        [{ key: 'app_id', value: 'my-app-id' }, { key: 'tx_type', value: 'offer' }, { key: 'from_amount', value: fromAmount }, { key: 'from_token', value: fromToken }, { key: 'to_amount', value: toAmount }, { key: 'to_token', value: toToken}],
-        expiresIn
-      );
+async function fetchAllRequests(publicClient) {
+  const query = publicClient.buildQuery();
+  const result = await query
+  .where(eq('type', 'browser-wallet'))
+  .where(eq('my_project', 'wins'))
+  .where(or([eq('tx_type', 'buy'), eq('tx_type', 'sell')]))
+  .withAttributes(true)
+  .withPayload(true)
+  .withMetadata(true)
+  .fetch()
+  return result.entities;
 }
 
-async function fetchAllEntities(publicClient) {
-    const query = publicClient.buildQuery();
-    const entities = await query
-    .where(eq('type', 'browser-wallet'))
-    .where(eq('my_project', 'wins'))
-    // .where(gt('created', 1763584400))
-    .withAttributes(true)
-    .withPayload(true)
-    .fetch()
-    return entities;
+async function fetchRequestsFromUserBuy(publicClient, userPublicKey) {
+  const query = publicClient.buildQuery();
+  const result = await query
+  .where(eq('type', 'browser-wallet'))
+  .where(eq('my_project', 'wins'))
+  .where(eq('tx_type', 'buy'))
+  .ownedBy(userPublicKey)
+  .withAttributes(true)
+  .withPayload(true)
+  .withMetadata(true)
+  .fetch()
+  return result.entities;
 }
 
-async function fetchEntitiesFromTokenAmountLT(publicClient, fromTokenAmount=1) {
-    const query = publicClient.buildQuery();
-    const entities = await query
-    .where(eq('type', 'browser-wallet'))
-    .where(eq('my_project', 'wins'))
-    .where(lt('from_token', fromTokenAmount))
-    .withAttributes(true)
-    .withPayload(true)
-    .fetch()
-    return entities;
-}
-
-async function fetchEntitiesFromTokenAmountGT(publicClient, fromTokenAmount=1) {
-    const query = publicClient.buildQuery();
-    const entities = await query
-    .where(eq('type', 'browser-wallet'))
-    .where(eq('my_project', 'wins'))
-    .where(gt('from_token', fromTokenAmount))
-    .withAttributes(true)
-    .withPayload(true)
-    .fetch()
-    return entities;
-}
-
-async function fetchEntitiesToTokenAmountLT(publicClient, toTokenAmount=1) {
-    const query = publicClient.buildQuery();
-    const entities = await query
-    .where(eq('type', 'browser-wallet'))
-    .where(eq('my_project', 'wins'))
-    .where(lt('to_token', toTokenAmount))
-    .withAttributes(true)
-    .withPayload(true)
-    .fetch()
-    return entities;
-}
-
-async function fetchEntitiesToTokenAmountGT(publicClient, toTokenAmount=1) {
-    const query = publicClient.buildQuery();
-    const entities = await query
-    .where(eq('type', 'browser-wallet'))
-    .where(eq('my_project', 'wins'))
-    .where(gt('to_token', toTokenAmount))
-    .withAttributes(true)
-    .withPayload(true)
-    .fetch()
-    return entities;
-}
-
-async function fetchEntitiesToToken(publicClient, toToken="ETH") {
-    const query = publicClient.buildQuery();
-    const entities = await query
-    .where(eq('type', 'browser-wallet'))
-    .where(eq('my_project', 'wins'))
-    .where(gt('to_token', 0))
-    .withAttributes(true)
-    .withPayload(true)
-    .fetch()
-    return entities;
+async function fetchRequestsFromUserSell(publicClient, userPublicKey) {
+  const query = publicClient.buildQuery();
+  const result = await query
+  .where(eq('type', 'browser-wallet'))
+  .where(eq('my_project', 'wins'))
+  .where(eq('tx_type', 'sell'))
+  .ownedBy(userPublicKey)
+  .withAttributes(true)
+  .withPayload(true)
+  .withMetadata(true)
+  .fetch()
+  return result.entities;
 }
 
 // we need to change the 'where gt' if we want to do various tokens and filter by 1, and not only one token and filter by 1.
-async function fetchEntitiesFromToken(publicClient, fromToken="ETH") {
+async function fetchRequestsFromToken(publicClient, fromToken="ETH") {
+  const query = publicClient.buildQuery();
+  const result = await query
+  .where(eq('type', 'browser-wallet'))
+  .where(eq('my_project', 'wins'))
+  .where(eq('from_token', fromToken))
+  .withAttributes(true)
+  .withPayload(true)
+  .withMetadata(true)
+  .fetch()
+  return result.entities;
+}
+
+async function fetchRequestsFromTokenGTAmount(publicClient, fromToken="ETH", amount=1) {
+  const query = publicClient.buildQuery();
+  const result = await query
+  .where(eq('type', 'browser-wallet'))
+  .where(eq('my_project', 'wins'))
+  .where(eq('from_token', fromToken))
+  .where(gt('from_amount', amount))
+  .withAttributes(true)
+  .withPayload(true)
+  .withMetadata(true)
+  .fetch()
+  return result.entities;
+}
+
+async function fetchRequestsFromTokenLTAmount(publicClient, fromToken="ETH", amount=1) {
+  const query = publicClient.buildQuery();
+  const result = await query
+  .where(eq('type', 'browser-wallet'))
+  .where(eq('my_project', 'wins'))
+  .where(eq('from_token', fromToken))
+  .where(lt('from_amount', amount))
+  .withAttributes(true)
+  .withPayload(true)
+  .withMetadata(true)
+  .fetch()
+  return result.entities;
+}
+
+
+// sell fromAmount of fromToken for an unknown amount of toToken
+// parentRequestKey is the txHash of a sell/buy entity.
+async function createOfferEntity(walletClient, parentRequestKey, toAmount, toToken, expiresIn=DEFAULT_EXPIRATION_TIME) {
+  const { entityKey, txHash } = createEntity(
+      walletClient, 
+      `offerring ${toAmount} ${toToken} to ${parentRequestKey}`, 
+      'text/plain',
+      [{ key: 'app_id', value: 'my-app-id' }, { key: 'tx_type', value: 'offer' }, { key: 'parent_request', value: parentRequestKey}, { key: 'to_amount', value: toAmount }, { key: 'to_token', value: toToken}],
+      expiresIn
+    );
+}
+
+async function fetchOffersParent(publicClient, parentRequestKey) {
+  const query = publicClient.buildQuery();
+  const result = await query
+  .where(eq('type', 'browser-wallet'))
+  .where(eq('my_project', 'wins'))
+  .where(eq('tx_type', 'offer'))
+  .where(eq('parent_request', parentRequestKey))
+  .withAttributes(true)
+  .withPayload(true)
+  .withMetadata(true)
+  .fetch()
+  return result.entities;
+}
+
+async function fetchOffersParentToToken(publicClient, parentRequestKey, toToken="ETH") {
     const query = publicClient.buildQuery();
-    const entities = await query
+    const result = await query
     .where(eq('type', 'browser-wallet'))
     .where(eq('my_project', 'wins'))
-    .where(gt('from_token', 0))
+    .where(eq('parent_request', parentRequestKey))
+    .where(eq('to_token', toToken))
     .withAttributes(true)
     .withPayload(true)
+    .withMetadata(true)
     .fetch()
-    return entities;
+    return result.entities;
 }
 
 
@@ -173,12 +196,26 @@ async function fetchEntitiesFromToken(publicClient, fromToken="ETH") {
 // fetch all entities owned by lookupAddress
 // filter=[{key: 'app_id', value: 'my-app-id'}, {key: 'tx_type', value: 'buy'}]
 async function fetchUserEntities(publicClient, lookupAddress, limit=undefined, attributes=[]) {
-  const entities = await publicClient.fetchEntities({
-    creator: lookupAddress,
-    attributes: attributes,
-    limit: limit,
+  const query = publicClient.buildQuery();
+  let builder = query
+    .where(eq('type', 'browser-wallet'))
+    .where(eq('my_project', 'wins'))
+    .ownedBy(lookupAddress)
+    .withAttributes(true)
+    .withPayload(true)
+    .withMetadata(true);
+  
+  // Add attribute filters if provided
+  attributes.forEach(attr => {
+    builder = builder.where(eq(attr.key, attr.value));
   });
-  return entities;
+  
+  if (limit) {
+    builder = builder.limit(limit);
+  }
+  
+  const result = await builder.fetch();
+  return result.entities;
 }
 
 // delete the entity with the given entityKey, maybe the user regrets deploying the trade
@@ -194,9 +231,10 @@ async function finalizeEntity(entityKey) {
   console.log('trade successful');
 }
 
-async function getEntityData(publicClient, entityKey) {
+async function getEntity(publicClient, entityKey) {
   const entity = await publicClient.getEntity(entityKey);
-  return bytesToString(entity.payload);
+  // return bytesToString(entity.payload);
+  return entity;
 }
 
-export { createEntity, createBuyEntity, createSellEntity, fetchUserEntities, getEntityData, fetchEntities };
+export { createEntity, createBuyEntity, createSellEntity, fetchUserEntities, getEntity, fetchAllRequests, fetchRequestsFromToken, fetchRequestsFromTokenGTAmount, fetchRequestsFromTokenLTAmount, createOfferEntity, fetchOffersParent, fetchOffersParentToToken, fetchRequestsFromUserBuy, fetchRequestsFromUserSell}
