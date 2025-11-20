@@ -1,8 +1,9 @@
 ### smart contract api needed
 
 1. make offer to request block
-2. regret offer to request block
-3. remove all offers made to request block
+2. accept offer 
+3. regret offer to request block
+4. remove all offers made to request block
 
 #### flow 
 
@@ -22,37 +23,39 @@ then the smart contract should swap the `ETH` and `DAI`.
 the contract will fail if there is not enough balance for one of the parties.
 
 
-if B made a request and he regrets it, he should be able to cancel his `allow withdraw 1000 ETH for 123123 DAI from my account for block 1`, meaning revoke the allow and get a confirmation for it. (revoke success or failure).
+if B made an offer and he regrets it, he should be able to cancel his `allow withdraw 1000 ETH for 123123 DAI from my account for block 1`, meaning revoke the allow and get a confirmation for it. (revoke success or failure).
 
 if A and B traded, all the other allows should be removed for the block, index the allows by block id.
 
 so the api should be like:
 
 ```js
-function make_offer(fromToken, fromAmount, toToken, toAmount, blockId) returns (bool);
+function make_offer(fromAmount, fromToken, toAmount, toToken, rfqID) returns (bool);
 
-function regret_offer(toToken, blockId) returns (bool) public {
+function accept_offer(offerSenderAddr, toToken, rfqID) returns (bool);
+
+function regret_offer(toToken, rfqID) returns (bool) public {
     // if transaction exists, remove it
-    const offer = offers[blockId][msg.sender][toToken]
+    const offer = offers[rfqID][msg.sender][toToken]
     if (offer != "") {
-        offers[blockId][msg.sender][toToken] = "";
+        offers[rfqID][msg.sender][toToken] = "";
     }
     // ...
 }
 
-function _regret_offer(senderAddr, toToken, blockId) returns (bool) private {
+function _regret_offer(senderAddr, toToken, rfqID) returns (bool) private {
     // if transaction exists, remove it
-    const offer = offers[blockId][senderADdr][toToken]
+    const offer = offers[rfqID][senderADdr][toToken]
     if (offer != "") {
-        offers[blockId][senderADdr][toToken] = "";
+        offers[rfqID][senderADdr][toToken] = "";
     }
     // ...
 }
 
-function remove_block_offers(blockId) returns (bool) {
-    for (offer in offers[blockId]) {
+function remove_block_offers(rfqID) returns (bool) {
+    for (offer in offers[rfqID]) {
         // we use the private implementation so we don't allow everyone to delete every offers
-        _regret_offer(offer.sender, offer.toToken, blockId);
+        _regret_offer(offer.sender, offer.toToken, rfqID);
     }
 }
 ```
