@@ -1,0 +1,9 @@
+{
+  "name": "@my-project/sdk",
+  "version": "1.0.0",
+  "main": "index.js",
+  "type": "module",
+  "dependencies": {
+    "@arkiv-network/sdk": "^0.4.5"
+  }
+}

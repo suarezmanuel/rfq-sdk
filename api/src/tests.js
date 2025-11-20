@@ -4,7 +4,7 @@ import { stringToPayload, bytesToString, ExpirationTime } from '@arkiv-network/s
 import { custom } from '@arkiv-network/sdk';
 import { eq, gt } from "@arkiv-network/sdk/query"
 
-import { createEntity, createBuyEntity, createSellEntity, fetchRequestsFromUserBuy, fetchRequestsFromUserSell, createOfferEntity, fetchOffersParent, getEntity, fetchAllRequests } from './utils.js';
+import { createEntity, createBuyEntity, createSellEntity, fetchRequestsFromUserBuy, fetchRequestsFromUserSell, createOfferEntity, fetchOffersParent } from './utils.js';
 
 async function testQuery() {
 
@@ -127,8 +127,8 @@ async function testCreateOfferAndFetchOffers() {
   console.log(`Connected as: ${account}`);
   console.log(Object.keys(publicClient)); 
 
-  const parentKey = await createBuyEntity(walletClient, '1.0', 'ETH', 'USDC');
-  await createOfferEntity(walletClient, parentKey, '3000.0', 'USDC');
+  const { entityKey: parentKey } = await createBuyEntity(walletClient, '1.0', 'ETH', 'USDC');
+  await createOfferEntity(walletClient, publicClient, parentKey, '3000.0', 'USDC');
   const offers = await fetchOffersParent(publicClient, parentKey);
   console.log(offers);
 }
@@ -143,7 +143,7 @@ async function testCreateBuyEntity(publicClient, walletClient, statusDiv, connec
     const { entityKey, txHash } = await createBuyEntity(walletClient, '1.0', 'ETH', 'USDC');
 
     statusDiv.textContent = 'Fetching entity data...';
-    const data = await getEntity(publicClient, entityKey);
+    const data = await publicClient.getEntity(entityKey);
 
     console.log('Key:', entityKey);
     console.log('Data:', data);
@@ -172,7 +172,7 @@ async function testCreateSellEntity(publicClient, walletClient, statusDiv, conne
       const { entityKey, txHash } = await createSellEntity(walletClient,  '1.0', 'ETH', 'USDC');
   
       statusDiv.textContent = 'Fetching entity data...';
-      const data = await getEntity(publicClient, entityKey);
+      const data = await publicClient.getEntity(entityKey);
   
       console.log('Key:', entityKey);
       console.log('Data:', data);

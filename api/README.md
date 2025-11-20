@@ -2,6 +2,17 @@
 have a working metamask wallet that has the 'mendoza' chain activated and has funds from the faucet
 all that can be done at https://mendoza.hoodi.arkiv.network/
 
+### to import 
+
+i think its enough to do `yarn add ../sdk` if at `frontend`.
+and then do `import { createBuyEntity, fetchAllRequests } from '@my-project/sdk';`
+the name `@my-project` can be changed at `sdk/package.json` line 2.
+
+to set it up i did `npm init -y; yarn add @arkiv-network/sdk;`
+
+
+### background
+
 The sdk has two main functionalities: 
 1. read existing request / offer data. 
 2. write new buy/sell requests / write new offers.
