@@ -1,0 +1,7 @@
+.env
+
+# Foundry/Forge
+# =============
+cache/
+out/
+broadcast/
