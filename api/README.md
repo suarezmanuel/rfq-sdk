@@ -242,6 +242,15 @@ await createOfferEntity(walletClient, parentKey, 'USDC', '3000.0');
 
 we should now see it when checking the same request later
 
+### implementation notes
+
+```js
+// returns [] when there are none.
+console.log(await fetchOffersParent(publicClient, entity.key));
+// returns Error when entity doesn't exist
+console.log(await publicClient.getEntity(entity.key));
+``` 
+
 ### ideas to maybe implement
 
 - add binance as an offer that is always available to all requests
