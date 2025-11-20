@@ -2,6 +2,6 @@
 
 # Foundry/Forge
 # =============
-cache/
-out/
-broadcast/
+cache
+out
+broadcast
