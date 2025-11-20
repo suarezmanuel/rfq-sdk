@@ -10,5 +10,11 @@
       "name": "v5.5.0",
       "rev": "fcbae5394ae8ad52d8e580a3477db99814b9d565"
     }
+  },
+  "lib/wormhole-solidity-sdk": {
+    "tag": {
+      "name": "v0.1.0",
+      "rev": "b9e129e65d34827d92fceeed8c87d3ecdfc801d0"
+    }
   }
 }

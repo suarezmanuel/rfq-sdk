@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 import "forge-std/Test.sol";
 import "../src/RFQSettlement.sol";
 import "./mocks/MockERC20.sol";
+import "./mocks/MockWormholeRelayer.sol";
 
 /**
  * @title RFQSettlementBaseTest
@@ -13,6 +14,7 @@ abstract contract RFQSettlementBaseTest is Test {
     RFQSettlement public settlement;
     MockERC20 public baseToken;
     MockERC20 public quoteToken;
+    MockWormholeRelayer public wormholeRelayer;
 
     address public creator;
     address public acceptor;
@@ -32,8 +34,11 @@ abstract contract RFQSettlementBaseTest is Test {
     );
 
     function setUp() public virtual {
-        // Deploy settlement contract
-        settlement = new RFQSettlement();
+        // Deploy mock Wormhole relayer
+        wormholeRelayer = new MockWormholeRelayer();
+
+        // Deploy settlement contract with Wormhole relayer
+        settlement = new RFQSettlement(address(wormholeRelayer));
 
         // Deploy mock tokens
         baseToken = new MockERC20("Base Token", "BASE");
