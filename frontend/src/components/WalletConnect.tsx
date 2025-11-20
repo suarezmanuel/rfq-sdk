@@ -59,7 +59,7 @@ export default function WalletConnect() {
 
   if (isConnected) {
     return (
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-3 text-white" >
         <div className="px-4 py-2 bg-gray-800 rounded-lg">
           <span className="text-sm font-mono">
             {address?.slice(0, 6)}...{address?.slice(-4)}
