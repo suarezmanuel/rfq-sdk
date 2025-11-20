@@ -7,6 +7,7 @@ import "@openzeppelin/utils/ReentrancyGuard.sol";
 import "@openzeppelin/access/Ownable.sol";
 import "wormhole-solidity-sdk/interfaces/IWormholeRelayer.sol";
 import "wormhole-solidity-sdk/interfaces/IWormholeReceiver.sol";
+import "./libraries/RFQValidation.sol";
 
 /**
  * @title RFQSettlement
@@ -175,6 +176,16 @@ contract RFQSettlement is ReentrancyGuard, Ownable, IWormholeReceiver {
      * @dev Error thrown when attempting to process an already processed message
      */
     error MessageAlreadyProcessed();
+
+    /**
+     * @dev Error thrown when deposit is not expired
+     */
+    error DepositNotExpired();
+
+    /**
+     * @dev Error thrown when caller is not the deposit creator
+     */
+    error NotDepositCreator();
 
     /**
      * @dev Emitted when native coins are deposited for an RFQ
@@ -350,7 +361,7 @@ contract RFQSettlement is ReentrancyGuard, Ownable, IWormholeReceiver {
         uint256 baseAmount,
         uint256 quoteAmount
     ) external payable nonReentrant {
-        _validateExecute(creator, baseToken, quoteToken, baseAmount, quoteAmount);
+        RFQValidation.validateExecuteParams(creator, baseToken, quoteToken, baseAmount, quoteAmount);
         _validateMsgValue(quoteToken, quoteAmount);
 
         address acceptor = msg.sender;
@@ -600,9 +611,9 @@ contract RFQSettlement is ReentrancyGuard, Ownable, IWormholeReceiver {
 
         // Validate deposit exists and caller is creator
         if (deposit.creator == address(0)) revert DepositNotFound();
-        if (deposit.creator != msg.sender) revert("Not deposit creator");
+        if (deposit.creator != msg.sender) revert NotDepositCreator();
         if (deposit.settled) revert DepositAlreadySettled();
-        if (block.timestamp <= deposit.expiryTimestamp) revert("Deposit not expired");
+        if (block.timestamp <= deposit.expiryTimestamp) revert DepositNotExpired();
 
         // Mark as settled to prevent double-reclaim
         deposit.settled = true;
@@ -832,21 +843,6 @@ contract RFQSettlement is ReentrancyGuard, Ownable, IWormholeReceiver {
             deposit.baseAmount,
             deposit.quoteAmount
         );
-    }
-
-    /**
-     * @dev Validates execute parameters
-     */
-    function _validateExecute(
-        address creator,
-        address baseToken,
-        address quoteToken,
-        uint256 baseAmount,
-        uint256 quoteAmount
-    ) private pure {
-        require(baseToken != address(0) && quoteToken != address(0), "Invalid token address");
-        require(baseAmount > 0 && quoteAmount > 0, "Invalid amount");
-        require(creator != address(0), "Invalid creator address");
     }
 
     /**
