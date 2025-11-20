@@ -216,7 +216,7 @@ contract RFQSettlement is ReentrancyGuard, Ownable {
         require(deposit.token == baseToken, "Base token mismatch");
         require(deposit.amount >= baseAmount, "Insufficient deposit");
 
-        _transferBaseToken(quoteId, creator, acceptor, baseToken, baseAmount);
+        _transferBaseToken(quoteId, acceptor, baseToken, baseAmount);
         _transferQuoteToken(acceptor, creator, quoteToken, quoteAmount);
 
         emit TradeExecuted(quoteId, creator, acceptor, baseToken, quoteToken, baseAmount, quoteAmount);
@@ -236,13 +236,7 @@ contract RFQSettlement is ReentrancyGuard, Ownable {
     /**
      * @dev Transfers baseToken from creator to acceptor
      */
-    function _transferBaseToken(
-        bytes32 quoteId,
-        address creator,
-        address acceptor,
-        address baseToken,
-        uint256 baseAmount
-    ) private {
+    function _transferBaseToken(bytes32 quoteId, address acceptor, address baseToken, uint256 baseAmount) private {
         AssetDeposit memory deposit = assetDeposits[quoteId];
         require(deposit.amount >= baseAmount, "Insufficient deposit");
 
