@@ -7,4 +7,14 @@ optimizer = true
 optimizer_runs = 200
 evm_version = 'shanghai'
 
+# Testnet RPC URLs
+[rpc_endpoints]
+sepolia = "${SEPOLIA_RPC_URL}"
+base_sepolia = "${BASE_SEPOLIA_RPC_URL}"
+
+# Etherscan API keys for contract verification
+[etherscan]
+sepolia = { key = "${ETHERSCAN_API_KEY}" }
+base_sepolia = { key = "${BASESCAN_API_KEY}" }
+
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
