@@ -610,14 +610,13 @@ contract RFQSettlement is ReentrancyGuard, Ownable, IWormholeReceiver {
      * It validates the source and routes to appropriate handler based on message type.
      *
      * @param payload Encoded message payload
-     * @param additionalMessages Additional messages (unused in this implementation)
      * @param sourceAddress Address of the sender contract on source chain
      * @param sourceChain Wormhole chain ID of the source chain
      * @param deliveryHash Unique hash for replay protection
      */
     function receiveWormholeMessages(
         bytes memory payload,
-        bytes[] memory additionalMessages,
+        bytes[] memory /* additionalMessages */,
         bytes32 sourceAddress,
         uint16 sourceChain,
         bytes32 deliveryHash
