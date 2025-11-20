@@ -10,6 +10,7 @@ import "wormhole-solidity-sdk/interfaces/IWormholeReceiver.sol";
 
 import "./libraries/RFQValidation.sol";
 import "./libraries/TokenTransfer.sol";
+import "./libraries/DepositManager.sol";
 
 /**
  * @title RFQSettlement
@@ -315,12 +316,8 @@ contract RFQSettlement is ReentrancyGuard, Ownable, IWormholeReceiver {
      * @param rfqId Unique identifier for the RFQ
      */
     function depositForRFQ(bytes32 rfqId) external payable {
-        if (msg.value == 0) {
-            revert InvalidDepositAmount();
-        }
-
-        ethDeposits[rfqId] = msg.value;
-        emit ETHDeposited(rfqId, msg.sender, msg.value);
+        uint256 amount = DepositManager.createDeposit(rfqId, ethDeposits);
+        emit ETHDeposited(rfqId, msg.sender, amount);
     }
 
     /**
@@ -329,19 +326,7 @@ contract RFQSettlement is ReentrancyGuard, Ownable, IWormholeReceiver {
      * @param rfqId Unique identifier for the RFQ
      */
     function withdrawDeposit(bytes32 rfqId) external nonReentrant {
-        uint256 amount = ethDeposits[rfqId];
-        if (amount == 0) {
-            revert NoDepositFound();
-        }
-
-        // Clear deposit before transfer
-        ethDeposits[rfqId] = 0;
-
-        (bool success,) = msg.sender.call{value: amount}("");
-        if (!success) {
-            revert WithdrawalFailed();
-        }
-
+        uint256 amount = DepositManager.withdrawDeposit(rfqId, ethDeposits);
         emit ETHWithdrawn(rfqId, msg.sender, amount);
     }
 
