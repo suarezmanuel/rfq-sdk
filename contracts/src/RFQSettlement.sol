@@ -117,31 +117,6 @@ contract RFQSettlement is ReentrancyGuard, Ownable, IWormholeReceiver {
     error UnexpectedETHSent();
 
     /**
-     * @dev Error thrown when native coin transfer to creator fails
-     */
-    error ETHTransferFailed();
-
-    /**
-     * @dev Error thrown when trying to deposit zero native coins
-     */
-    error InvalidDepositAmount();
-
-    /**
-     * @dev Error thrown when trying to withdraw with no deposit
-     */
-    error NoDepositFound();
-
-    /**
-     * @dev Error thrown when native coin transfer to withdrawer fails
-     */
-    error WithdrawalFailed();
-
-    /**
-     * @dev Error thrown when baseToken is native but no deposit exists
-     */
-    error InsufficientETHDeposit();
-
-    /**
      * @dev Error thrown when an invalid chain ID is provided
      */
     error InvalidChainId();
@@ -616,7 +591,8 @@ contract RFQSettlement is ReentrancyGuard, Ownable, IWormholeReceiver {
      */
     function receiveWormholeMessages(
         bytes memory payload,
-        bytes[] memory /* additionalMessages */,
+        bytes[] memory,
+        /* additionalMessages */
         bytes32 sourceAddress,
         uint16 sourceChain,
         bytes32 deliveryHash
