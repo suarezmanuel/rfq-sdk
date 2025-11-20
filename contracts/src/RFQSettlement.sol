@@ -156,51 +156,89 @@ contract RFQSettlement is ReentrancyGuard {
         uint256 baseAmount,
         uint256 quoteAmount
     ) external payable nonReentrant {
-        require(baseToken != address(0) && quoteToken != address(0), "Invalid token address");
-        require(baseAmount > 0 && quoteAmount > 0, "Invalid amount");
-        require(creator != address(0), "Invalid creator address");
-
-        // msg.value validations
-        if (quoteToken == ETH) {
-            if (msg.value != quoteAmount) {
-                revert ETHAmountMismatch();
-            }
-        } else {
-            if (msg.value > 0) {
-                revert UnexpectedETHSent();
-            }
-        }
+        _validateExecute(creator, baseToken, quoteToken, baseAmount, quoteAmount);
+        _validateMsgValue(quoteToken, quoteAmount);
 
         address acceptor = msg.sender;
 
-        // Conditional logic for baseToken transfer
+        _transferBaseToken(rfqId, creator, acceptor, baseToken, baseAmount);
+        _transferQuoteToken(acceptor, creator, quoteToken, quoteAmount);
+
+        emit TradeExecuted(rfqId, creator, acceptor, baseToken, quoteToken, baseAmount, quoteAmount);
+    }
+
+    /**
+     * @dev Validates execute parameters
+     */
+    function _validateExecute(
+        address creator,
+        address baseToken,
+        address quoteToken,
+        uint256 baseAmount,
+        uint256 quoteAmount
+    ) private pure {
+        require(baseToken != address(0) && quoteToken != address(0), "Invalid token address");
+        require(baseAmount > 0 && quoteAmount > 0, "Invalid amount");
+        require(creator != address(0), "Invalid creator address");
+    }
+
+    /**
+     * @dev Validates msg.value based on quoteToken type
+     */
+    function _validateMsgValue(address quoteToken, uint256 quoteAmount) private view {
+        if (quoteToken == ETH) {
+            if (msg.value != quoteAmount) revert ETHAmountMismatch();
+        } else {
+            if (msg.value > 0) revert UnexpectedETHSent();
+        }
+    }
+
+    /**
+     * @dev Transfers baseToken from creator to acceptor
+     */
+    function _transferBaseToken(
+        bytes32 rfqId,
+        address creator,
+        address acceptor,
+        address baseToken,
+        uint256 baseAmount
+    ) private {
         if (baseToken == ETH) {
-            if (ethDeposits[rfqId] < baseAmount) {
-                revert InsufficientETHDeposit();
-            }
-
-            // Deduct from deposit
-            ethDeposits[rfqId] -= baseAmount;
-
-            (bool success,) = acceptor.call{value: baseAmount}("");
-            if (!success) {
-                revert ETHTransferFailed();
-            }
+            _transferETHFromDeposit(rfqId, acceptor, baseAmount);
         } else {
             IERC20(baseToken).safeTransferFrom(creator, acceptor, baseAmount);
         }
+    }
 
-        // Conditional payment logic for quoteToken
+    /**
+     * @dev Transfers quoteToken from acceptor to creator
+     */
+    function _transferQuoteToken(address acceptor, address creator, address quoteToken, uint256 quoteAmount)
+        private
+    {
         if (quoteToken == ETH) {
-            (bool success,) = creator.call{value: quoteAmount}("");
-            if (!success) {
-                revert ETHTransferFailed();
-            }
+            _sendETH(creator, quoteAmount);
         } else {
             IERC20(quoteToken).safeTransferFrom(acceptor, creator, quoteAmount);
         }
+    }
 
-        emit TradeExecuted(rfqId, creator, acceptor, baseToken, quoteToken, baseAmount, quoteAmount);
+    /**
+     * @dev Transfers ETH from deposit to recipient
+     */
+    function _transferETHFromDeposit(bytes32 rfqId, address recipient, uint256 amount) private {
+        if (ethDeposits[rfqId] < amount) revert InsufficientETHDeposit();
+
+        ethDeposits[rfqId] -= amount;
+        _sendETH(recipient, amount);
+    }
+
+    /**
+     * @dev Sends ETH to recipient with proper error handling
+     */
+    function _sendETH(address recipient, uint256 amount) private {
+        (bool success,) = recipient.call{value: amount}("");
+        if (!success) revert ETHTransferFailed();
     }
 
     /**
