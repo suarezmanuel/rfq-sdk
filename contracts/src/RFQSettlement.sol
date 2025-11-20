@@ -46,6 +46,14 @@ contract RFQSettlement is ReentrancyGuard, Ownable, IWormholeReceiver {
     IWormholeRelayer public immutable wormholeRelayer;
 
     /**
+     * @dev Enum for cross-chain message types
+     */
+    enum MessageType {
+        DEPOSIT_NOTIFICATION, // Chain A -> Chain B: Notify about locked deposit
+        SETTLEMENT_CONFIRMATION // Chain B -> Chain A: Confirm settlement and release tokens
+    }
+
+    /**
      * @dev Struct containing cross-chain deposit information
      */
     struct CrossChainDeposit {
@@ -58,6 +66,8 @@ contract RFQSettlement is ReentrancyGuard, Ownable, IWormholeReceiver {
         uint16 destChainId; // Wormhole chain ID of destination chain
         uint256 expiryTimestamp; // Timestamp after which deposit can be reclaimed
         bool settled; // Whether the deposit has been settled
+        address acceptorOnSourceChain; // Address to receive base tokens on source chain
+        address quoteTokenRecipient; // Address to receive quote tokens on destination chain
     }
 
     /**
@@ -65,6 +75,12 @@ contract RFQSettlement is ReentrancyGuard, Ownable, IWormholeReceiver {
      * rfqId => CrossChainDeposit details
      */
     mapping(bytes32 => CrossChainDeposit) public crossChainDeposits;
+
+    /**
+     * @dev Mapping to track native coin deposits for RFQs
+     * rfqId => deposited amount in native coins
+     */
+    mapping(bytes32 => uint256) public ethDeposits;
 
     /**
      * @dev Mapping to track trusted contract addresses on other chains
@@ -159,12 +175,6 @@ contract RFQSettlement is ReentrancyGuard, Ownable, IWormholeReceiver {
      * @dev Error thrown when attempting to process an already processed message
      */
     error MessageAlreadyProcessed();
-
-    /**
-     * @dev Mapping to track native coin deposits for RFQs
-     * rfqId => deposited amount in native coins
-     */
-    mapping(bytes32 => uint256) public ethDeposits;
 
     /**
      * @dev Emitted when native coins are deposited for an RFQ
@@ -269,6 +279,15 @@ contract RFQSettlement is ReentrancyGuard, Ownable, IWormholeReceiver {
     event TrustedContractSet(uint16 indexed chainId, address contractAddress);
 
     /**
+     * @dev Emitted when base tokens are released on source chain after settlement
+     * @param rfqId Unique identifier for the cross-chain RFQ
+     * @param acceptor Address receiving base tokens on source chain
+     * @param baseToken Address of the base token
+     * @param baseAmount Amount released
+     */
+    event BaseTokensReleased(bytes32 indexed rfqId, address indexed acceptor, address baseToken, uint256 baseAmount);
+
+    /**
      * @dev Constructor
      * @param _wormholeRelayer Address of the Wormhole relayer contract
      */
@@ -304,12 +323,13 @@ contract RFQSettlement is ReentrancyGuard, Ownable, IWormholeReceiver {
 
         // Clear deposit before transfer
         ethDeposits[rfqId] = 0;
-        emit ETHWithdrawn(rfqId, msg.sender, amount);
 
         (bool success,) = msg.sender.call{value: amount}("");
         if (!success) {
             revert WithdrawalFailed();
         }
+
+        emit ETHWithdrawn(rfqId, msg.sender, amount);
     }
 
     /**
@@ -356,10 +376,254 @@ contract RFQSettlement is ReentrancyGuard, Ownable, IWormholeReceiver {
     }
 
     /**
+     * @dev Initiate a cross-chain deposit for RFQ settlement
+     *
+     * This function locks tokens on the source chain and sends a message to the destination chain
+     * via Wormhole. The acceptor on the destination chain can then settle the RFQ by providing
+     * the quote token.
+     *
+     * @param destChainId Wormhole chain ID of the destination chain
+     * @param baseToken Address of the base token (or ETH sentinel)
+     * @param quoteToken Address of the quote token expected on destination chain
+     * @param baseAmount Amount of base token to lock
+     * @param quoteAmount Amount of quote token expected from acceptor
+     * @param expiryDuration Duration in seconds until the deposit expires
+     * @param acceptorOnSourceChain Address on source chain to receive base tokens
+     * @param quoteTokenRecipient Address on destination chain to receive quote tokens
+     * @param refundAddress Address on source chain to receive refunds of unused gas
+     * @return rfqId Unique identifier for this cross-chain RFQ
+     */
+    function initiateCrossChainDeposit(
+        uint16 destChainId,
+        address baseToken,
+        address quoteToken,
+        uint256 baseAmount,
+        uint256 quoteAmount,
+        uint256 expiryDuration,
+        address acceptorOnSourceChain,
+        address quoteTokenRecipient,
+        address refundAddress
+    ) external payable nonReentrant returns (bytes32 rfqId) {
+        // Validate parameters
+        if (destChainId == 0) revert InvalidChainId();
+        if (trustedContracts[destChainId] == address(0)) revert InvalidChainId();
+        if (baseToken == address(0) || quoteToken == address(0)) revert("Invalid token address");
+        if (baseAmount == 0 || quoteAmount == 0) revert("Invalid amount");
+        if (expiryDuration < MINIMUM_EXPIRY_DURATION) revert ExpiryTooShort();
+        if (acceptorOnSourceChain == address(0)) revert("Invalid acceptor address");
+        if (quoteTokenRecipient == address(0)) revert("Invalid recipient address");
+
+        // Generate unique RFQ ID
+        rfqId = keccak256(
+            abi.encodePacked(block.chainid, destChainId, msg.sender, chainNonces[destChainId]++, block.timestamp)
+        );
+
+        // Calculate expiry timestamp
+        uint256 expiryTimestamp = block.timestamp + expiryDuration;
+
+        // Lock base tokens
+        _lockTokens(rfqId, baseToken, baseAmount);
+
+        // Store deposit information
+        crossChainDeposits[rfqId] = CrossChainDeposit({
+            creator: msg.sender,
+            baseToken: baseToken,
+            quoteToken: quoteToken,
+            baseAmount: baseAmount,
+            quoteAmount: quoteAmount,
+            sourceChainId: uint16(block.chainid),
+            destChainId: destChainId,
+            expiryTimestamp: expiryTimestamp,
+            settled: false,
+            acceptorOnSourceChain: acceptorOnSourceChain,
+            quoteTokenRecipient: quoteTokenRecipient
+        });
+
+        // Send cross-chain message and get sequence
+        uint64 sequence = _sendCrossChainMessage(
+            destChainId,
+            rfqId,
+            baseToken,
+            quoteToken,
+            baseAmount,
+            quoteAmount,
+            expiryTimestamp,
+            acceptorOnSourceChain,
+            quoteTokenRecipient,
+            refundAddress
+        );
+
+        emit CrossChainDepositInitiated(
+            rfqId,
+            uint16(block.chainid),
+            destChainId,
+            msg.sender,
+            baseToken,
+            quoteToken,
+            baseAmount,
+            quoteAmount,
+            expiryTimestamp,
+            sequence
+        );
+    }
+
+    /**
+     * @dev Internal function to lock tokens for cross-chain deposit
+     */
+    function _lockTokens(bytes32 rfqId, address token, uint256 amount) private {
+        if (token == ETH) {
+            // For native ETH, we need additional msg.value beyond the Wormhole fee
+            if (msg.value < amount) revert InvalidDepositAmount();
+            ethDeposits[rfqId] = amount;
+        } else {
+            // Transfer ERC20 tokens from sender
+            IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
+        }
+    }
+
+    /**
+     * @dev Internal function to send cross-chain message via Wormhole
+     */
+    function _sendCrossChainMessage(
+        uint16 destChainId,
+        bytes32 rfqId,
+        address baseToken,
+        address quoteToken,
+        uint256 baseAmount,
+        uint256 quoteAmount,
+        uint256 expiryTimestamp,
+        address acceptorOnSourceChain,
+        address quoteTokenRecipient,
+        address refundAddress
+    ) private returns (uint64 sequence) {
+        // Encode payload for destination chain (DEPOSIT_NOTIFICATION)
+        bytes memory payload = abi.encode(
+            uint8(MessageType.DEPOSIT_NOTIFICATION),
+            rfqId,
+            msg.sender,
+            baseToken,
+            quoteToken,
+            baseAmount,
+            quoteAmount,
+            expiryTimestamp,
+            acceptorOnSourceChain,
+            quoteTokenRecipient
+        );
+
+        // Calculate Wormhole delivery cost
+        (uint256 deliveryCost,) = wormholeRelayer.quoteEVMDeliveryPrice(destChainId, 0, CROSS_CHAIN_GAS_LIMIT);
+
+        // Ensure sufficient payment for Wormhole delivery
+        uint256 wormholeFee = baseToken == ETH ? msg.value - baseAmount : msg.value;
+        if (wormholeFee < deliveryCost) revert InsufficientWormholeFee();
+
+        // Send message via Wormhole
+        sequence = wormholeRelayer.sendPayloadToEvm{value: wormholeFee}(
+            destChainId,
+            trustedContracts[destChainId],
+            payload,
+            0,
+            CROSS_CHAIN_GAS_LIMIT,
+            uint16(block.chainid),
+            refundAddress
+        );
+    }
+
+    /**
+     * @dev Quote the cost for initiating a cross-chain deposit (one-way)
+     *
+     * @param destChainId Wormhole chain ID of the destination chain
+     * @return deliveryCost Cost in native gas tokens to send the message
+     */
+    function quoteCrossChainDeposit(uint16 destChainId) external view returns (uint256 deliveryCost) {
+        (deliveryCost,) = wormholeRelayer.quoteEVMDeliveryPrice(
+            destChainId,
+            0, // receiverValue
+            CROSS_CHAIN_GAS_LIMIT
+        );
+    }
+
+    /**
+     * @dev Quote the total cost for a complete cross-chain RFQ (round-trip)
+     * This includes both the initial deposit message and the settlement confirmation
+     *
+     * @param destChainId Wormhole chain ID of the destination chain
+     * @return creatorCost Cost for creator to initiate (A->B message)
+     * @return acceptorCost Cost for acceptor to settle (B->A message)
+     * @return totalCost Total cost across both chains
+     */
+    function quoteCrossChainRoundTrip(uint16 destChainId)
+        external
+        view
+        returns (uint256 creatorCost, uint256 acceptorCost, uint256 totalCost)
+    {
+        // Cost for creator: A -> B message
+        (creatorCost,) = wormholeRelayer.quoteEVMDeliveryPrice(destChainId, 0, CROSS_CHAIN_GAS_LIMIT);
+
+        // Cost for acceptor: B -> A message (same as A -> B in most cases)
+        (acceptorCost,) = wormholeRelayer.quoteEVMDeliveryPrice(uint16(block.chainid), 0, CROSS_CHAIN_GAS_LIMIT);
+
+        totalCost = creatorCost + acceptorCost;
+    }
+
+    /**
+     * @dev Get detailed information about a cross-chain deposit
+     *
+     * @param rfqId Unique identifier for the cross-chain RFQ
+     * @return deposit Full deposit information
+     */
+    function getCrossChainDeposit(bytes32 rfqId) external view returns (CrossChainDeposit memory deposit) {
+        return crossChainDeposits[rfqId];
+    }
+
+    /**
+     * @dev Check if a cross-chain deposit is still active (exists and not expired)
+     *
+     * @param rfqId Unique identifier for the cross-chain RFQ
+     * @return isActive True if deposit exists, not settled, and not expired
+     */
+    function isCrossChainDepositActive(bytes32 rfqId) external view returns (bool isActive) {
+        CrossChainDeposit storage deposit = crossChainDeposits[rfqId];
+        return deposit.creator != address(0) && !deposit.settled && block.timestamp <= deposit.expiryTimestamp;
+    }
+
+    /**
+     * @dev Reclaim a cross-chain deposit after expiry
+     *
+     * This function allows the creator to reclaim their locked tokens if the RFQ
+     * was not settled before the expiry timestamp.
+     *
+     * @param rfqId Unique identifier for the cross-chain RFQ
+     */
+    function reclaimCrossChainDeposit(bytes32 rfqId) external nonReentrant {
+        CrossChainDeposit storage deposit = crossChainDeposits[rfqId];
+
+        // Validate deposit exists and caller is creator
+        if (deposit.creator == address(0)) revert DepositNotFound();
+        if (deposit.creator != msg.sender) revert("Not deposit creator");
+        if (deposit.settled) revert DepositAlreadySettled();
+        if (block.timestamp <= deposit.expiryTimestamp) revert("Deposit not expired");
+
+        // Mark as settled to prevent double-reclaim
+        deposit.settled = true;
+
+        // Return locked tokens to creator
+        if (deposit.baseToken == ETH) {
+            uint256 amount = ethDeposits[rfqId];
+            ethDeposits[rfqId] = 0;
+            _sendETH(msg.sender, amount);
+        } else {
+            IERC20(deposit.baseToken).safeTransfer(msg.sender, deposit.baseAmount);
+        }
+
+        emit CrossChainDepositReclaimed(rfqId, msg.sender, deposit.baseToken, deposit.baseAmount);
+    }
+
+    /**
      * @dev Receive Wormhole messages (implements IWormholeReceiver)
      *
      * This function is called by the Wormhole relayer to deliver cross-chain messages.
-     * It validates the source and processes the settlement.
+     * It validates the source and routes to appropriate handler based on message type.
      *
      * @param payload Encoded message payload
      * @param additionalMessages Additional messages (unused in this implementation)
@@ -392,9 +656,182 @@ contract RFQSettlement is ReentrancyGuard, Ownable, IWormholeReceiver {
         }
         consumedMessages[deliveryHash] = true;
 
-        // Decode payload and process settlement
-        // This will be implemented in Task Group 3
-        // For now, this satisfies the interface requirement
+        // Decode message type from payload
+        uint8 messageType = abi.decode(payload, (uint8));
+
+        if (messageType == uint8(MessageType.DEPOSIT_NOTIFICATION)) {
+            _handleDepositNotification(payload, sourceChain);
+        } else if (messageType == uint8(MessageType.SETTLEMENT_CONFIRMATION)) {
+            _handleSettlementConfirmation(payload);
+        } else {
+            revert("Invalid message type");
+        }
+    }
+
+    /**
+     * @dev Handle DEPOSIT_NOTIFICATION message from source chain
+     */
+    function _handleDepositNotification(bytes memory payload, uint16 sourceChain) private {
+        // Decode full payload
+        (, // skip message type
+            bytes32 rfqId,
+            address creator,
+            address baseToken,
+            address quoteToken,
+            uint256 baseAmount,
+            uint256 quoteAmount,
+            uint256 expiryTimestamp,
+            address acceptorOnSourceChain,
+            address quoteTokenRecipient
+        ) = abi.decode(
+            payload, (uint8, bytes32, address, address, address, uint256, uint256, uint256, address, address)
+        );
+
+        // Validate expiry
+        if (block.timestamp > expiryTimestamp) {
+            revert ExpiredDeposit();
+        }
+
+        // Store information about this cross-chain RFQ on destination chain
+        crossChainDeposits[rfqId] = CrossChainDeposit({
+            creator: creator,
+            baseToken: baseToken,
+            quoteToken: quoteToken,
+            baseAmount: baseAmount,
+            quoteAmount: quoteAmount,
+            sourceChainId: sourceChain,
+            destChainId: uint16(block.chainid),
+            expiryTimestamp: expiryTimestamp,
+            settled: false,
+            acceptorOnSourceChain: acceptorOnSourceChain,
+            quoteTokenRecipient: quoteTokenRecipient
+        });
+
+        emit CrossChainSettlementReceived(
+            rfqId,
+            sourceChain,
+            creator,
+            address(0), // acceptor not yet known
+            baseToken,
+            quoteToken,
+            baseAmount,
+            quoteAmount
+        );
+    }
+
+    /**
+     * @dev Handle SETTLEMENT_CONFIRMATION message from destination chain
+     * This releases the locked base tokens to the acceptor on the source chain
+     */
+    function _handleSettlementConfirmation(bytes memory payload) private {
+        // Decode confirmation payload
+        (, bytes32 rfqId) = abi.decode(payload, (uint8, bytes32));
+
+        CrossChainDeposit storage deposit = crossChainDeposits[rfqId];
+
+        // Validate deposit exists and not already settled
+        if (deposit.creator == address(0)) revert DepositNotFound();
+        if (deposit.settled) revert DepositAlreadySettled();
+
+        // Mark as settled
+        deposit.settled = true;
+
+        // Transfer base tokens to acceptor on source chain
+        address acceptor = deposit.acceptorOnSourceChain;
+        if (deposit.baseToken == ETH) {
+            uint256 amount = ethDeposits[rfqId];
+            ethDeposits[rfqId] = 0;
+            _sendETH(acceptor, amount);
+        } else {
+            IERC20(deposit.baseToken).safeTransfer(acceptor, deposit.baseAmount);
+        }
+
+        // Emit events for tracking
+        emit BaseTokensReleased(rfqId, acceptor, deposit.baseToken, deposit.baseAmount);
+
+        emit TradeExecuted(
+            rfqId,
+            deposit.creator,
+            acceptor,
+            deposit.baseToken,
+            deposit.quoteToken,
+            deposit.baseAmount,
+            deposit.quoteAmount
+        );
+    }
+
+    /**
+     * @dev Accept a cross-chain RFQ by providing the quote token
+     *
+     * This function is called on the destination chain by an acceptor who wants to
+     * complete the cross-chain swap. They provide the quote token and the contract
+     * sends a confirmation message back to the source chain to release base tokens.
+     *
+     * @param rfqId Unique identifier for the cross-chain RFQ
+     */
+    function acceptCrossChainRFQ(bytes32 rfqId) external payable nonReentrant {
+        CrossChainDeposit storage deposit = crossChainDeposits[rfqId];
+
+        // Validate deposit exists on this chain
+        if (deposit.creator == address(0)) revert DepositNotFound();
+        if (deposit.settled) revert DepositAlreadySettled();
+        if (block.timestamp > deposit.expiryTimestamp) revert ExpiredDeposit();
+
+        // Mark as settled
+        deposit.settled = true;
+
+        address acceptor = msg.sender;
+
+        // Calculate Wormhole fee for return message
+        (uint256 returnMessageCost,) =
+            wormholeRelayer.quoteEVMDeliveryPrice(deposit.sourceChainId, 0, CROSS_CHAIN_GAS_LIMIT);
+
+        // Handle quote token payment and Wormhole fee
+        uint256 wormholeFee;
+        if (deposit.quoteToken == ETH) {
+            // Acceptor must send: quoteAmount + Wormhole fee
+            uint256 requiredValue = deposit.quoteAmount + returnMessageCost;
+            if (msg.value < requiredValue) {
+                revert InsufficientWormholeFee();
+            }
+            wormholeFee = msg.value - deposit.quoteAmount;
+
+            // Send quote ETH to creator's designated recipient
+            _sendETH(deposit.quoteTokenRecipient, deposit.quoteAmount);
+        } else {
+            // For ERC20, acceptor must send Wormhole fee as msg.value
+            if (msg.value < returnMessageCost) {
+                revert InsufficientWormholeFee();
+            }
+            wormholeFee = msg.value;
+
+            // Transfer ERC20 quote tokens to creator's designated recipient
+            IERC20(deposit.quoteToken).safeTransferFrom(acceptor, deposit.quoteTokenRecipient, deposit.quoteAmount);
+        }
+
+        // Encode settlement confirmation payload
+        bytes memory confirmationPayload = abi.encode(uint8(MessageType.SETTLEMENT_CONFIRMATION), rfqId);
+
+        // Send confirmation message back to source chain
+        wormholeRelayer.sendPayloadToEvm{value: wormholeFee}(
+            deposit.sourceChainId,
+            trustedContracts[deposit.sourceChainId],
+            confirmationPayload,
+            0,
+            CROSS_CHAIN_GAS_LIMIT,
+            uint16(block.chainid),
+            acceptor // refund unused gas to acceptor
+        );
+
+        emit TradeExecuted(
+            rfqId,
+            deposit.creator,
+            acceptor,
+            deposit.baseToken,
+            deposit.quoteToken,
+            deposit.baseAmount,
+            deposit.quoteAmount
+        );
     }
 
     /**
