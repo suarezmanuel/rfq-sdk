@@ -4,7 +4,7 @@ import { stringToPayload, bytesToString, ExpirationTime } from '@arkiv-network/s
 import { custom } from '@arkiv-network/sdk';
 import { eq, gt } from "@arkiv-network/sdk/query"
 
-import { createEntity, createBuyEntity, createSellEntity, fetchRequestsFromUserBuy, fetchRequestsFromUserSell, createOfferEntity, fetchOffersParent } from './utils.js';
+import { createEntity, finalizeRequest, createBuyEntity, createSellEntity, fetchRequestsFromUserBuy, fetchRequestsFromUserSell, createOfferEntity, fetchOffersParent } from './utils.js';
 
 async function testQuery() {
 
@@ -42,10 +42,19 @@ async function testQuery() {
     
     console.log(`Connected as: ${account}`);
 
-    console.log(publicClient, walletClient.account)
-    const userAddress = typeof walletClient.account === 'string' ? walletClient.account : walletClient.account.address;
-    console.log(await fetchRequestsFromUserBuy(publicClient, userAddress));
-    console.log(await fetchRequestsFromUserSell(publicClient, userAddress));
+    await createBuyEntity(walletClient, '1.0', 'ETH', 'USDC');
+    const entity = (await fetchRequestsFromUserBuy(publicClient, walletClient.account)).at(-1);
+    console.log("request entity:", entity);
+
+    await createOfferEntity(walletClient, publicClient, entity.key, '3000.0', 'USDC');
+    const offers = await fetchOffersParent(publicClient, entity.key);
+    console.log("offer entity", offers);
+
+    await finalizeRequest(walletClient, publicClient, entity.key);
+    // returns [] when there are none.
+    console.log(await fetchOffersParent(publicClient, entity.key));
+    // returns Error when entity doesn't exist
+    console.log(await publicClient.getEntity(entity.key));
 }
 
 async function testFetchUserBuyAndSellRequests() {
@@ -85,11 +94,10 @@ async function testFetchUserBuyAndSellRequests() {
   console.log(`Connected as: ${account}`);
 
   console.log(publicClient, walletClient.account)
-  const userAddress = typeof walletClient.account === 'string' ? walletClient.account : walletClient.account.address;
-  console.log(await fetchRequestsFromUserBuy(publicClient, userAddress));
-  console.log(await fetchRequestsFromUserSell(publicClient, userAddress));
+  console.log(await fetchRequestsFromUserBuy(publicClient, walletClient.account));
+  console.log(await fetchRequestsFromUserSell(publicClient, walletClient.account));
 }
-
+// test this in front
 async function testCreateOfferAndFetchOffers() {
 
   // Check if MetaMask is installed
@@ -125,12 +133,24 @@ async function testCreateOfferAndFetchOffers() {
   connectBtn.disabled = true;
   
   console.log(`Connected as: ${account}`);
-  console.log(Object.keys(publicClient)); 
 
-  const { entityKey: parentKey } = await createBuyEntity(walletClient, '1.0', 'ETH', 'USDC');
-  await createOfferEntity(walletClient, publicClient, parentKey, '3000.0', 'USDC');
-  const offers = await fetchOffersParent(publicClient, parentKey);
-  console.log(offers);
+  await createBuyEntity(walletClient, '1.0', 'ETH', 'USDC');
+  const entity = (await fetchRequestsFromUserBuy(publicClient, walletClient.account)).at(-1);
+  console.log("request entity:", entity);
+
+  let [offererAddress] = await window.ethereum.request({ method: 'eth_requestAccounts' });
+  if (walletClient === offererAddress) {
+    throw new Error("You didn't switch accounts! The buyer and offerer are the same.");
+  }
+  const offererClient = createWalletClient({
+    chain: mendoza,
+    transport: custom(window.ethereum),
+    account: offererAddress,
+  });
+
+  await createOfferEntity(offererClient, publicClient, entity.key, '3000.0', 'USDC');
+  const offers = await fetchOffersParent(publicClient, entity.key);
+  console.log("offer entity", offers);
 }
 
 async function testCreateBuyEntity(publicClient, walletClient, statusDiv, connectBtn) {
@@ -191,4 +211,4 @@ async function testCreateSellEntity(publicClient, walletClient, statusDiv, conne
     }
 }
 
-export {testQuery, testCreateBuyEntity};
+export {testQuery, testCreateBuyEntity, testCreateOfferAndFetchOffers};

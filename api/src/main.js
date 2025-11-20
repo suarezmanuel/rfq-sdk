@@ -1,4 +1,4 @@
-import { testQuery, testCreateBuyEntity } from './tests.js';
+import { testQuery, testCreateBuyEntity, testCreateOfferAndFetchOffers } from './tests.js';
 
 localStorage.debug = 'arkiv:*'
 // Function to be called from HTML button

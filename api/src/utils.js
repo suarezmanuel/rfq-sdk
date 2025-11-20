@@ -65,8 +65,9 @@ async function fetchAllRequests(publicClient) {
   .fetch()
   return result.entities;
 }
-
+// should receive walletClient.account
 async function fetchRequestsFromUserBuy(publicClient, userPublicKey) {
+  userPublicKey = typeof userPublicKey === 'string' ? userPublicKey : userPublicKey.address;
   const query = publicClient.buildQuery();
   const result = await query
   .where(eq('type', 'browser-wallet'))
@@ -220,4 +221,4 @@ async function finalizeRequest(walletClient, publicClient, requestKey) {
   await walletClient.deleteEntity({ entityKey: requestEntity.key });
 }
 
-export { createEntity, createBuyEntity, createSellEntity, fetchRequestsFromUserBuy, fetchRequestsFromUserSell, fetchAllRequests, fetchRequestsFromToken, fetchRequestsFromTokenGTAmount, fetchRequestsFromTokenLTAmount, createOfferEntity, fetchOffersParent, fetchOffersParentToToken, finalizeRequest}
+export { createEntity, createBuyEntity, createSellEntity, fetchRequestsFromUserBuy, fetchRequestsFromUserSell, fetchOffersParentFromUser, fetchAllRequests, fetchRequestsFromToken, fetchRequestsFromTokenGTAmount, fetchRequestsFromTokenLTAmount, createOfferEntity, fetchOffersParent, fetchOffersParentToToken, finalizeRequest}
