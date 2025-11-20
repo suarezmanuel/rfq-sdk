@@ -11,6 +11,7 @@ import "wormhole-solidity-sdk/interfaces/IWormholeReceiver.sol";
 import "./libraries/RFQValidation.sol";
 import "./libraries/TokenTransfer.sol";
 import "./libraries/DepositManager.sol";
+import "./libraries/WormholeCodec.sol";
 
 /**
  * @title RFQSettlement
@@ -480,18 +481,19 @@ contract RFQSettlement is ReentrancyGuard, Ownable, IWormholeReceiver {
         address quoteTokenRecipient,
         address refundAddress
     ) private returns (uint64 sequence) {
-        // Encode payload for destination chain (DEPOSIT_NOTIFICATION)
-        bytes memory payload = abi.encode(
-            uint8(MessageType.DEPOSIT_NOTIFICATION),
-            rfqId,
-            msg.sender,
-            baseToken,
-            quoteToken,
-            baseAmount,
-            quoteAmount,
-            expiryTimestamp,
-            acceptorOnSourceChain,
-            quoteTokenRecipient
+        // Encode payload
+        bytes memory payload = WormholeCodec.encodeDepositNotification(
+            WormholeCodec.DepositNotificationParams({
+                rfqId: rfqId,
+                creator: msg.sender,
+                baseToken: baseToken,
+                quoteToken: quoteToken,
+                baseAmount: baseAmount,
+                quoteAmount: quoteAmount,
+                expiryTimestamp: expiryTimestamp,
+                acceptorOnSourceChain: acceptorOnSourceChain,
+                quoteTokenRecipient: quoteTokenRecipient
+            })
         );
 
         // Calculate Wormhole delivery cost
@@ -639,7 +641,7 @@ contract RFQSettlement is ReentrancyGuard, Ownable, IWormholeReceiver {
         consumedMessages[deliveryHash] = true;
 
         // Decode message type from payload
-        uint8 messageType = abi.decode(payload, (uint8));
+        uint8 messageType = WormholeCodec.getMessageType(payload);
 
         if (messageType == uint8(MessageType.DEPOSIT_NOTIFICATION)) {
             _handleDepositNotification(payload, sourceChain);
@@ -655,49 +657,37 @@ contract RFQSettlement is ReentrancyGuard, Ownable, IWormholeReceiver {
      */
     function _handleDepositNotification(bytes memory payload, uint16 sourceChain) private {
         // Decode full payload
-        (, // skip message type
-            bytes32 rfqId,
-            address creator,
-            address baseToken,
-            address quoteToken,
-            uint256 baseAmount,
-            uint256 quoteAmount,
-            uint256 expiryTimestamp,
-            address acceptorOnSourceChain,
-            address quoteTokenRecipient
-        ) = abi.decode(
-            payload, (uint8, bytes32, address, address, address, uint256, uint256, uint256, address, address)
-        );
+        WormholeCodec.DepositNotificationParams memory params = WormholeCodec.decodeDepositNotification(payload);
 
         // Validate expiry
-        if (block.timestamp > expiryTimestamp) {
+        if (block.timestamp > params.expiryTimestamp) {
             revert ExpiredDeposit();
         }
 
         // Store information about this cross-chain RFQ on destination chain
-        crossChainDeposits[rfqId] = CrossChainDeposit({
-            creator: creator,
-            baseToken: baseToken,
-            quoteToken: quoteToken,
-            baseAmount: baseAmount,
-            quoteAmount: quoteAmount,
+        crossChainDeposits[params.rfqId] = CrossChainDeposit({
+            creator: params.creator,
+            baseToken: params.baseToken,
+            quoteToken: params.quoteToken,
+            baseAmount: params.baseAmount,
+            quoteAmount: params.quoteAmount,
             sourceChainId: sourceChain,
             destChainId: uint16(block.chainid),
-            expiryTimestamp: expiryTimestamp,
+            expiryTimestamp: params.expiryTimestamp,
             settled: false,
-            acceptorOnSourceChain: acceptorOnSourceChain,
-            quoteTokenRecipient: quoteTokenRecipient
+            acceptorOnSourceChain: params.acceptorOnSourceChain,
+            quoteTokenRecipient: params.quoteTokenRecipient
         });
 
         emit CrossChainSettlementReceived(
-            rfqId,
+            params.rfqId,
             sourceChain,
-            creator,
+            params.creator,
             address(0), // acceptor not yet known
-            baseToken,
-            quoteToken,
-            baseAmount,
-            quoteAmount
+            params.baseToken,
+            params.quoteToken,
+            params.baseAmount,
+            params.quoteAmount
         );
     }
 
@@ -707,9 +697,9 @@ contract RFQSettlement is ReentrancyGuard, Ownable, IWormholeReceiver {
      */
     function _handleSettlementConfirmation(bytes memory payload) private {
         // Decode confirmation payload
-        (, bytes32 rfqId) = abi.decode(payload, (uint8, bytes32));
+        WormholeCodec.SettlementConfirmationParams memory params = WormholeCodec.decodeSettlementConfirmation(payload);
 
-        CrossChainDeposit storage deposit = crossChainDeposits[rfqId];
+        CrossChainDeposit storage deposit = crossChainDeposits[params.rfqId];
 
         // Validate deposit exists and not already settled
         if (deposit.creator == address(0)) revert DepositNotFound();
@@ -721,16 +711,16 @@ contract RFQSettlement is ReentrancyGuard, Ownable, IWormholeReceiver {
         // Transfer base tokens to acceptor on source chain
         address acceptor = deposit.acceptorOnSourceChain;
         if (deposit.baseToken == ETH) {
-            TokenTransfer.unlockETH(rfqId, acceptor, ethDeposits[rfqId], ethDeposits);
+            TokenTransfer.unlockETH(params.rfqId, acceptor, ethDeposits[params.rfqId], ethDeposits);
         } else {
             IERC20(deposit.baseToken).safeTransfer(acceptor, deposit.baseAmount);
         }
 
         // Emit events for tracking
-        emit BaseTokensReleased(rfqId, acceptor, deposit.baseToken, deposit.baseAmount);
+        emit BaseTokensReleased(params.rfqId, acceptor, deposit.baseToken, deposit.baseAmount);
 
         emit TradeExecuted(
-            rfqId,
+            params.rfqId,
             deposit.creator,
             acceptor,
             deposit.baseToken,
@@ -790,7 +780,8 @@ contract RFQSettlement is ReentrancyGuard, Ownable, IWormholeReceiver {
         }
 
         // Encode settlement confirmation payload
-        bytes memory confirmationPayload = abi.encode(uint8(MessageType.SETTLEMENT_CONFIRMATION), rfqId);
+        bytes memory confirmationPayload =
+            WormholeCodec.encodeSettlementConfirmation(WormholeCodec.SettlementConfirmationParams({rfqId: rfqId}));
 
         // Send confirmation message back to source chain
         wormholeRelayer.sendPayloadToEvm{value: wormholeFee}(
