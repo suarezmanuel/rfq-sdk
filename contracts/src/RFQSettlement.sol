@@ -7,7 +7,9 @@ import "@openzeppelin/utils/ReentrancyGuard.sol";
 import "@openzeppelin/access/Ownable.sol";
 import "wormhole-solidity-sdk/interfaces/IWormholeRelayer.sol";
 import "wormhole-solidity-sdk/interfaces/IWormholeReceiver.sol";
+
 import "./libraries/RFQValidation.sol";
+import "./libraries/TokenTransfer.sol";
 
 /**
  * @title RFQSettlement
@@ -432,8 +434,8 @@ contract RFQSettlement is ReentrancyGuard, Ownable, IWormholeReceiver {
         // Calculate expiry timestamp
         uint256 expiryTimestamp = block.timestamp + expiryDuration;
 
-        // Lock base tokens
-        _lockTokens(rfqId, baseToken, baseAmount);
+        // Lock base tokens using TokenTransfer library
+        TokenTransfer.lockTokens(baseToken, msg.sender, baseAmount, rfqId, ethDeposits);
 
         // Store deposit information
         crossChainDeposits[rfqId] = CrossChainDeposit({
@@ -476,20 +478,6 @@ contract RFQSettlement is ReentrancyGuard, Ownable, IWormholeReceiver {
             expiryTimestamp,
             sequence
         );
-    }
-
-    /**
-     * @dev Internal function to lock tokens for cross-chain deposit
-     */
-    function _lockTokens(bytes32 rfqId, address token, uint256 amount) private {
-        if (token == ETH) {
-            // For native ETH, we need additional msg.value beyond the Wormhole fee
-            if (msg.value < amount) revert InvalidDepositAmount();
-            ethDeposits[rfqId] = amount;
-        } else {
-            // Transfer ERC20 tokens from sender
-            IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
-        }
     }
 
     /**
@@ -620,9 +608,7 @@ contract RFQSettlement is ReentrancyGuard, Ownable, IWormholeReceiver {
 
         // Return locked tokens to creator
         if (deposit.baseToken == ETH) {
-            uint256 amount = ethDeposits[rfqId];
-            ethDeposits[rfqId] = 0;
-            _sendETH(msg.sender, amount);
+            TokenTransfer.unlockETH(rfqId, msg.sender, ethDeposits[rfqId], ethDeposits);
         } else {
             IERC20(deposit.baseToken).safeTransfer(msg.sender, deposit.baseAmount);
         }
@@ -750,9 +736,7 @@ contract RFQSettlement is ReentrancyGuard, Ownable, IWormholeReceiver {
         // Transfer base tokens to acceptor on source chain
         address acceptor = deposit.acceptorOnSourceChain;
         if (deposit.baseToken == ETH) {
-            uint256 amount = ethDeposits[rfqId];
-            ethDeposits[rfqId] = 0;
-            _sendETH(acceptor, amount);
+            TokenTransfer.unlockETH(rfqId, acceptor, ethDeposits[rfqId], ethDeposits);
         } else {
             IERC20(deposit.baseToken).safeTransfer(acceptor, deposit.baseAmount);
         }
@@ -808,7 +792,7 @@ contract RFQSettlement is ReentrancyGuard, Ownable, IWormholeReceiver {
             wormholeFee = msg.value - deposit.quoteAmount;
 
             // Send quote ETH to creator's designated recipient
-            _sendETH(deposit.quoteTokenRecipient, deposit.quoteAmount);
+            TokenTransfer.sendETH(deposit.quoteTokenRecipient, deposit.quoteAmount);
         } else {
             // For ERC20, acceptor must send Wormhole fee as msg.value
             if (msg.value < returnMessageCost) {
@@ -863,7 +847,7 @@ contract RFQSettlement is ReentrancyGuard, Ownable, IWormholeReceiver {
         private
     {
         if (baseToken == ETH) {
-            _transferETHFromDeposit(rfqId, acceptor, baseAmount);
+            TokenTransfer.unlockETH(rfqId, acceptor, baseAmount, ethDeposits);
         } else {
             IERC20(baseToken).safeTransferFrom(creator, acceptor, baseAmount);
         }
@@ -874,28 +858,10 @@ contract RFQSettlement is ReentrancyGuard, Ownable, IWormholeReceiver {
      */
     function _transferQuoteToken(address acceptor, address creator, address quoteToken, uint256 quoteAmount) private {
         if (quoteToken == ETH) {
-            _sendETH(creator, quoteAmount);
+            TokenTransfer.sendETH(creator, quoteAmount);
         } else {
             IERC20(quoteToken).safeTransferFrom(acceptor, creator, quoteAmount);
         }
-    }
-
-    /**
-     * @dev Transfers ETH from deposit to recipient
-     */
-    function _transferETHFromDeposit(bytes32 rfqId, address recipient, uint256 amount) private {
-        if (ethDeposits[rfqId] < amount) revert InsufficientETHDeposit();
-
-        ethDeposits[rfqId] -= amount;
-        _sendETH(recipient, amount);
-    }
-
-    /**
-     * @dev Sends ETH to recipient with proper error handling
-     */
-    function _sendETH(address recipient, uint256 amount) private {
-        (bool success,) = recipient.call{value: amount}("");
-        if (!success) revert ETHTransferFailed();
     }
 
     /**
